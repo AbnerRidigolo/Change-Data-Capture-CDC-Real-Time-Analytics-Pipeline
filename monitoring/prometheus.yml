@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'clickhouse'
+    static_configs:
+      - targets: ['clickhouse:9363']
+
+  - job_name: 'kafka-connect'
+    metrics_path: '/actuator/prometheus' # If using Spring Boot/Micrometer or custom Connect endpoints
+    static_configs:
+      - targets: ['connect:8083']
