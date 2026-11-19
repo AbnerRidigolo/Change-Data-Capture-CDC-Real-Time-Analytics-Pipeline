@@ -16,9 +16,6 @@
     "key.converter.schemas.enable": "false",
     "value.converter.schemas.enable": "false",
     "decimal.handling.mode": "double",
-    "transforms": "maskEmail",
-    "transforms.maskEmail.type": "org.apache.kafka.connect.transforms.MaskField$Value",
-    "transforms.maskEmail.fields": "email",
-    "transforms.maskEmail.replacement": "xxxx@masked.com"
+    "column.mask.with.8.chars": "ecom\\.customers\\.email"
   }
 }
