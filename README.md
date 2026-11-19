@@ -12,7 +12,7 @@ graph TD
         PG[(PostgreSQL)] -- WAL Logs --> DBZ[Debezium Connector]
     end
     subgraph Streaming
-        DBZ -- Ingestão e Mascaramento SMT --> KFK[Kafka Broker]
+        DBZ -- Ingestão e mascaramento de coluna --> KFK[Kafka Broker]
         KFK --- RC[Redpanda Console UI]
     end
     subgraph Analytics OLAP
@@ -32,7 +32,7 @@ graph TD
 
 ### Componentes & Justificativa de Design:
 1. **PostgreSQL**: Banco transacional OLTP que simula o banco de produção de um e-commerce. Configurado com `wal_level = logical` e `REPLICA IDENTITY FULL` para habilitar CDC completo.
-2. **Debezium (Kafka Connect)**: Escuta o log de transações do PostgreSQL (Write-Ahead Log - WAL) e gera eventos de mutação. Ele inclui uma **Single Message Transformation (SMT)** para mascarar e-mails de clientes na origem, atendendo às regulamentações da **LGPD/GDPR**.
+2. **Debezium (Kafka Connect)**: Escuta o log de transações do PostgreSQL (Write-Ahead Log - WAL), gera eventos de mutação e mascara a coluna de e-mail antes de publicar no Kafka.
 3. **Apache Kafka & Redpanda Console**: Message broker gerenciando a persistência e tópicos. Redpanda Console expõe uma interface de depuração visual.
 4. **ClickHouse OLAP**: Destino final analítico. Utiliza o motor **Kafka nativo do ClickHouse** integrado com **Materialized Views**. Tabelas finais utilizam **ReplacingMergeTree** para deduplicação assíncrona orientada pela timestamp de transação (`ts_ms`) e uma flag lógica de exclusão (`is_deleted`).
 5. **Observabilidade (Prometheus & Grafana)**: Prometheus coleta métricas nativas do ClickHouse e do Kafka Connect. O Grafana serve como interface analítica de monitoramento do pipeline.
@@ -50,7 +50,7 @@ cdc_pipeline/
 ├── README.md                   # Documentação do projeto (esta página)
 │
 ├── debezium/
-│   └── register_connector.json # Configuração do conector Debezium com mascaramento SMT
+│   └── register_connector.json # Configuração do conector Debezium com mascaramento de coluna
 │
 ├── sql/
 │   ├── init_postgres.sql       # Tabelas originais, dados mock e replicação lógica
@@ -94,7 +94,7 @@ Abra o terminal (PowerShell no Windows) e execute o script de automação:
 1. Sobe os containers do Docker (Postgres, Kafka, ClickHouse, Prometheus, Grafana, Console).
 2. Aguarda até que o serviço Kafka Connect do Debezium esteja saudável.
 3. Valida a saúde de conectores antigos. Se encontrar um conector quebrado (ex: após reset do banco), reconstrói o conector de forma auto-recuperável.
-4. Registra o conector do PostgreSQL no Debezium com mascaramento SMT.
+4. Registra o conector do PostgreSQL no Debezium com mascaramento de coluna.
 
 ---
 
@@ -130,7 +130,7 @@ Abra um terceiro terminal. O script de verificação compara o estado atual do P
 python scripts/verify.py --loop
 ```
 
-Você verá que os dados se sincronizam em tempo real. **Além disso, verifique no Redpanda Console ou no ClickHouse que todos os e-mails inseridos aparecem mascarados como `xxxx@masked.com`, protegendo os dados pessoais dos clientes!**
+Você verá que os dados se sincronizam em tempo real. **Além disso, verifique no Redpanda Console ou no ClickHouse que todos os e-mails inseridos aparecem mascarados como `********`, protegendo os dados pessoais dos clientes!**
 
 ---
 
@@ -142,9 +142,9 @@ Para tratar atualizações e exclusões lógicas de forma eficiente em bancos OL
 *   A tabela final usa a Engine **ReplacingMergeTree** indexada pelo timestamp de transação (`ts_ms`).
 *   Ao realizar consultas analíticas, usamos o modificador **`FINAL`** (ex: `SELECT count() FROM ecom.orders FINAL WHERE is_deleted = 0`), consolidando as atualizações assincronamente na leitura e ignorando registros deletados.
 
-### 2. Segurança e LGPD na Origem (Single Message Transformations - SMT)
+### 2. Mascaramento de e-mail na origem
 Grandes volumes de dados corporativos não devem trafegar dados sensíveis descriptografados ou desprotegidos.
-*   Implementamos o transformador `MaskField` no Kafka Connect para substituir o campo `email` na origem pelo valor estático `xxxx@masked.com`. Isso garante segurança nas partições do Kafka de ponta a ponta.
+*   O conector Debezium mascara `ecom.customers.email` com oito asteriscos antes de publicar. A regra se aplica às imagens `before` e `after` do evento. Se você atualiza um ambiente existente, aplicar a configuração protege os eventos novos. Os dados históricos exigem tratamento separado.
 
 ### 3. Observabilidade Integrada
 A pipeline expõe métricas para monitorar a latência dos dados:
@@ -155,6 +155,20 @@ A pipeline expõe métricas para monitorar a latência dos dados:
 Disponibilizamos arquivos Terraform que espelham essa topologia na AWS. O arquivo [rds.tf](file:///C:/Users/Abner%20Ridigolo/.gemini/antigravity/scratch/cdc_pipeline/terraform/rds.tf) cria especificamente um parameter group habilitando o parâmetro `rds.logical_replication = 1` e força a ativação de backups automatizados no RDS Postgres, o que é um pré-requisito mandatório da AWS para habilitar replicação física e lógica por CDC.
 
 ---
+
+## Teste de integração e latência
+
+Em um ambiente local de demonstração separado, use o Docker Compose para subir PostgreSQL, Kafka, Debezium e ClickHouse e execute:
+
+```sh
+python -m pip install psycopg2-binary confluent-kafka
+python -m unittest discover -s tests -v
+python -m scripts.smoke --rounds 5 --timeout 90 --output cdc-latency.json
+```
+
+O teste faz INSERT, UPDATE e DELETE de clientes e pedidos sintéticos. Confere conteúdos e marcadores de exclusão por chave no ClickHouse e verifica o mascaramento das imagens antes/depois diretamente no Kafka. O CI falha se uma alteração não convergir dentro do prazo.
+
+O relatório traz p50 e p95 por operação e no agregado. A medição vai do fim do commit no PostgreSQL até a primeira leitura correspondente no ClickHouse, com sondagem a cada 100 ms. Há uma rodada de aquecimento fora da amostra. Os resultados descrevem o ambiente de teste e não representam um SLA de produção. O [workflow de integração](.github/workflows/cdc.yml) publica o JSON de cada execução como artefato.
 
 ## 🛑 Como Desligar o Projeto
 Quando terminar seus testes, você pode desligar e remover todos os containers e volumes criados rodando:

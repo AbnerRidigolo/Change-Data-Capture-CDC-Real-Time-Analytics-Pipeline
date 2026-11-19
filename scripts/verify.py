@@ -33,7 +33,7 @@ PG_PARAMS = {
 
 CH_URL = "http://localhost:8123/"
 
-def query_clickhouse(sql):
+def query_clickhouse(sql, *, strict=False):
     try:
         # We append default_format=JSON to get JSON response back from ClickHouse HTTP interface
         req = urllib.request.Request(
@@ -44,10 +44,12 @@ def query_clickhouse(sql):
                 'X-ClickHouse-Key': 'password'
             }
         )
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=4) as response:
             res = json.loads(response.read().decode('utf-8'))
             return res.get('data', [])
     except urllib.error.URLError as e:
+        if strict:
+            raise
         print(f"Error querying ClickHouse: {e}")
         return []
 
@@ -101,10 +103,11 @@ def run_verification():
 
     print("\n" + "-"*50)
     if cust_match and ord_match and rev_match:
-        print(" STATUS: SUCESSO! Os dados estao 100% sincronizados.")
+        print(" STATUS: Contagens e faturamento conferem neste momento.")
     else:
         print(" STATUS: EM SINCRONIZACAO. (Aguardando lag de rede / Debezium processar eventos)")
     print("="*50 + "\n")
+    return cust_match and ord_match and rev_match
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--loop":
@@ -116,4 +119,4 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\nVerificacao encerrada.")
     else:
-        run_verification()
+        sys.exit(0 if run_verification() else 1)

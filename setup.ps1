@@ -43,38 +43,14 @@ Write-Host "Kafka Connect pronto!" -ForegroundColor Green
 # 3. Register the Debezium Postgres Connector
 Write-Host "Registrando o conector do PostgreSQL no Debezium..." -ForegroundColor Cyan
 
-# Check if connector is already registered and healthy
-$register_needed = $true
+$registration = Get-Content -Raw -LiteralPath "debezium/register_connector.json" | ConvertFrom-Json
 try {
-    $existing = Invoke-RestMethod -Uri "http://localhost:8083/connectors/postgres-connector" -Method Get -ErrorAction SilentlyContinue
-    if ($existing) {
-        # Check connector and task states
-        $status = Invoke-RestMethod -Uri "http://localhost:8083/connectors/postgres-connector/status" -Method Get -ErrorAction Stop
-        $conn_state = $status.connector.state
-        $task_state = $status.tasks[0].state
-        
-        if ($conn_state -eq "RUNNING" -and $task_state -eq "RUNNING") {
-            Write-Host "Conector já registrado anteriormente e saudável (RUNNING). Pulando registro..." -ForegroundColor Yellow
-            $register_needed = $false
-        } else {
-            Write-Host "Conector existente está em estado instável (Connector: $conn_state, Task: $task_state). Recriando..." -ForegroundColor Orange
-            $null = Invoke-RestMethod -Uri "http://localhost:8083/connectors/postgres-connector" -Method Delete -ErrorAction Stop
-            Start-Sleep -Seconds 3
-        }
-    }
+    $configJson = $registration.config | ConvertTo-Json -Depth 10
+    $null = Invoke-RestMethod -Uri "http://localhost:8083/connectors/$($registration.name)/config" -Method Put -Body $configJson -ContentType "application/json" -ErrorAction Stop
+    Write-Host "Configuração do conector aplicada com sucesso!" -ForegroundColor Green
 } catch {
-    # If endpoint throws or is missing, proceed to register
-}
-
-if ($register_needed) {
-    $config_json = Get-Content -Raw -Path "debezium/register_connector.json"
-    try {
-        $resp = Invoke-RestMethod -Uri "http://localhost:8083/connectors" -Method Post -Body $config_json -ContentType "application/json"
-        Write-Host "Conector 'postgres-connector' registrado com sucesso!" -ForegroundColor Green
-    } catch {
-        Write-Error "Falha ao registrar o conector do Debezium: $_"
-        exit 1
-    }
+    Write-Error "Falha ao configurar o conector do Debezium: $_"
+    exit 1
 }
 
 Write-Host "`n=== AMBIENTE PRONTO E OPERACIONANTE! ===" -ForegroundColor Green
