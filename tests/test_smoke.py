@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import Mock, patch
 
-from scripts.smoke import assert_masked_customer_events, latency_summary, order_matches
+from scripts.smoke import assert_masked_customer_events, latency_summary, order_matches, wait_for
 
 
 class SmokeContracts(unittest.TestCase):
@@ -29,6 +30,12 @@ class SmokeContracts(unittest.TestCase):
     def test_latency_summary_uses_nearest_rank(self):
         self.assertEqual(latency_summary([3, 1, 5, 2, 4]),
                          {"samples": 5, "p50_ms": 3, "p95_ms": 5})
+
+    def test_wait_retries_a_tcp_reset_during_container_startup(self):
+        probe = Mock(side_effect=[ConnectionResetError(), True])
+        with patch("scripts.smoke.time.sleep"):
+            self.assertTrue(wait_for("Connect", probe, bool, timeout=1))
+        self.assertEqual(probe.call_count, 2)
 
 
 if __name__ == "__main__":

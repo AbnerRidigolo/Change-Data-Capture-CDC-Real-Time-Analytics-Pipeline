@@ -57,7 +57,7 @@ def wait_for(description, probe, accepts, timeout):
             value = probe()
             if accepts(value):
                 return value
-        except URLError:
+        except (URLError, ConnectionError, TimeoutError):
             # Containers can accept TCP before their HTTP endpoints are ready.
             pass
         remaining = deadline - time.monotonic()
